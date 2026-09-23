@@ -49,20 +49,27 @@ def split_message(text, limit=1400):
 
 def send(text):
     """Send to WhatsApp via CallMeBot, split into parts if long."""
-    for i, part in enumerate(split_message(text)):
+    parts = split_message(text)
+    if not parts:
+        raise RuntimeError("Nothing to send (empty message).")
+    print(f"---- message ({len(text)} chars, {len(parts)} part(s)) ----\n{text}\n----")
+    for i, part in enumerate(parts):
         if DRY:
-            print("---- (dry run) ----\n" + part)
             continue
         if i:
-            time.sleep(5)
+            time.sleep(10)
         r = requests.get(
             "https://api.callmebot.com/whatsapp.php",
             params={"phone": os.environ["WHATSAPP_PHONE"],
                     "apikey": os.environ["CALLMEBOT_APIKEY"], "text": part},
             timeout=60,
         )
-        if r.status_code != 200:
-            raise RuntimeError(f"CallMeBot error {r.status_code}: {r.text[:200]}")
+        reply = " ".join(r.text.split())[:300]
+        print(f"CallMeBot part {i + 1}: HTTP {r.status_code}: {reply}")
+        bad = ("error", "invalid", "blocked", "too long", "not allowed")
+        ok = "queued" in reply.lower() or "sent" in reply.lower()
+        if r.status_code != 200 or (not ok and any(w in reply.lower() for w in bad)):
+            raise RuntimeError(f"CallMeBot did not accept part {i + 1}: {reply}")
     print("Sent.")
 
 
@@ -346,22 +353,36 @@ _Not financial advice._"""
 
 # ---------- Claude ----------
 def ask_claude(prompt):
-    r = requests.post(
-        "https://api.anthropic.com/v1/messages",
-        headers={"x-api-key": os.environ["ANTHROPIC_API_KEY"],
-                 "anthropic-version": "2023-06-01",
-                 "content-type": "application/json"},
-        json={"model": MODEL, "max_tokens": 3000,
-              "tools": [{"type": "web_search_20250305", "name": "web_search",
-                         "max_uses": 8}],
-              "messages": [{"role": "user", "content": prompt}]},
-        timeout=500,
-    )
-    if r.status_code != 200:
-        raise RuntimeError(f"Anthropic API error {r.status_code}: {r.text[:300]}")
-    blocks = r.json()["content"]
-    last_tool = max((i for i, b in enumerate(blocks) if b["type"] != "text"), default=-1)
-    return "".join(b["text"] for b in blocks[last_tool + 1:] if b["type"] == "text").strip()
+    """Call Claude with web search. Continues if the search loop pauses."""
+    messages = [{"role": "user", "content": prompt}]
+    for attempt in range(4):
+        r = requests.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={"x-api-key": os.environ["ANTHROPIC_API_KEY"],
+                     "anthropic-version": "2023-06-01",
+                     "content-type": "application/json"},
+            json={"model": MODEL, "max_tokens": 4000,
+                  "tools": [{"type": "web_search_20250305", "name": "web_search",
+                             "max_uses": 8}],
+                  "messages": messages},
+            timeout=500,
+        )
+        if r.status_code != 200:
+            raise RuntimeError(f"Anthropic API error {r.status_code}: {r.text[:300]}")
+        data = r.json()
+        blocks, stop = data["content"], data.get("stop_reason")
+        print(f"Claude call {attempt + 1}: stop_reason={stop}, blocks={len(blocks)}")
+        if stop == "pause_turn":
+            messages.append({"role": "assistant", "content": blocks})
+            continue
+        last_tool = max((i for i, b in enumerate(blocks) if b["type"] != "text"), default=-1)
+        text = "".join(b["text"] for b in blocks[last_tool + 1:] if b["type"] == "text").strip()
+        if not text:
+            text = "\n".join(b["text"] for b in blocks if b["type"] == "text").strip()
+        if not text:
+            raise RuntimeError(f"Claude returned no report text (stop_reason={stop}).")
+        return text
+    raise RuntimeError("Claude kept pausing and never finished the report.")
 
 
 # ---------- jobs ----------
