@@ -35,7 +35,7 @@ LANGUAGE = "English"           # e.g. "Simplified Chinese" for 中文报告
 MODEL = "claude-sonnet-5"      # Claude model used for the reports
 MORNING_SEND = (9, 21)         # ET  (= 6:21 AM Pacific)
 PRECLOSE_SEND = (15, 30)       # ET  (= 12:30 PM Pacific)
-UPDATES_TO = "whatsapp"        # 30-min updates: "whatsapp" or "telegram"
+UPDATES_TO = "telegram"        # 30-min updates: "whatsapp" or "telegram"
 # --------------------------------------------------------------------------
 
 ET = ZoneInfo("America/New_York")
