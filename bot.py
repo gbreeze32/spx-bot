@@ -361,7 +361,7 @@ def ask_claude(prompt):
             headers={"x-api-key": os.environ["ANTHROPIC_API_KEY"],
                      "anthropic-version": "2023-06-01",
                      "content-type": "application/json"},
-            json={"model": MODEL, "max_tokens": 4000,
+            json={"model": MODEL, "max_tokens": 16000,
                   "tools": [{"type": "web_search_20250305", "name": "web_search",
                              "max_uses": 8}],
                   "messages": messages},
@@ -375,8 +375,16 @@ def ask_claude(prompt):
         if stop == "pause_turn":
             messages.append({"role": "assistant", "content": blocks})
             continue
-        last_tool = max((i for i, b in enumerate(blocks) if b["type"] != "text"), default=-1)
-        text = "".join(b["text"] for b in blocks[last_tool + 1:] if b["type"] == "text").strip()
+        tool_types = ("server_tool_use", "web_search_tool_result")
+        last_tool = max((i for i, b in enumerate(blocks) if b["type"] in tool_types), default=-1)
+        final = "".join(b.get("text", "") for b in blocks[last_tool + 1:] if b["type"] == "text").strip()
+        if stop == "max_tokens" and not final:
+            # Ran out of room before writing the report: ask it to write it now.
+            messages.append({"role": "assistant", "content": blocks})
+            messages.append({"role": "user", "content":
+                             "Stop researching. Write the final report now, following the template exactly."})
+            continue
+        text = final
         if not text:
             text = "\n".join(b["text"] for b in blocks if b["type"] == "text").strip()
         if not text:
