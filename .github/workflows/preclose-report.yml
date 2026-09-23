@@ -2,7 +2,7 @@ name: SPX pre-close report
 
 on:
   schedule:
-    # 19:10 and 20:10 UTC Mon-Fri = 15:10 ET in summer or winter time. The report is written, then sent at 15:30 ET (12:30 PM PT).
+    # 19:10 and 20:10 UTC Mon-Fri = 15:10 ET in summer or winter time. The report is written, then  sent at 15:30 ET (12:30 PM PT).
     - cron: "10 19,20 * * 1-5"
   workflow_dispatch:
     inputs:
