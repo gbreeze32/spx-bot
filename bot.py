@@ -73,12 +73,18 @@ def send(text):
             continue
         if i:
             time.sleep(10)
-        r = requests.get(
-            "https://api.callmebot.com/whatsapp.php",
-            params={"phone": os.environ["WHATSAPP_PHONE"],
-                    "apikey": os.environ["CALLMEBOT_APIKEY"], "text": part},
-            timeout=60,
-        )
+        part = re.sub(r"https?://", "", part)  # links with https:// get a 403
+        for attempt in range(2):
+            r = requests.get(
+                "https://api.callmebot.com/whatsapp.php",
+                params={"phone": os.environ["WHATSAPP_PHONE"],
+                        "apikey": os.environ["CALLMEBOT_APIKEY"], "text": part},
+                timeout=60,
+            )
+            if r.status_code != 403:
+                break
+            print("CallMeBot returned 403, retrying in 30 s...")
+            time.sleep(30)
         reply = " ".join(r.text.split())[:300]
         print(f"CallMeBot part {i + 1}: HTTP {r.status_code}: {reply}")
         bad = ("error", "invalid", "blocked", "too long", "not allowed")
@@ -455,7 +461,9 @@ def summary(kind, now, s, ai, url, nd):
                       f"Risk    {c.get('spike_risk', '—')}"]) + "```"]
     if ev:
         lines += [""] + [f"{'⚠️' if x.get('important') else '▸'} {x.get('title', '')}" for x in ev]
-    lines += ["", f"📊 Full report: {url}"]
+    # CallMeBot's server blocks messages containing "https://", so send the
+    # link without it; WhatsApp still makes it tappable.
+    lines += ["", f"📊 Full report: {url.replace('https://', '')}"]
     return "\n".join(lines)
 
 
