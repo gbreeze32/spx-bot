@@ -61,36 +61,62 @@ def whatsapp_fix(text):
     return re.sub(r"```[ \t]*\n(.*?)\n[ \t]*```", r"```\1```", text, flags=re.S)
 
 
+def _callmebot(text):
+    r = requests.get(
+        "https://api.callmebot.com/whatsapp.php",
+        params={"phone": os.environ["WHATSAPP_PHONE"],
+                "apikey": os.environ["CALLMEBOT_APIKEY"], "text": text},
+        timeout=60,
+    )
+    reply = " ".join(r.text.split())[:200]
+    print(f"CallMeBot: HTTP {r.status_code}: {reply}")
+    bad = ("error", "invalid", "blocked", "too long", "not allowed")
+    ok = "queued" in reply.lower() or "sent" in reply.lower()
+    return r.status_code == 200 and (ok or not any(w in reply.lower() for w in bad)), r.status_code
+
+
+LINK = re.compile(r"(?:https?://)?[\w.-]+\.github\.io/\S*")
+
+
 def send(text):
-    """Send to WhatsApp via CallMeBot, split into parts if long."""
+    """Send to WhatsApp via CallMeBot, split into parts if long.
+
+    CallMeBot's firewall sometimes refuses messages that contain a link (HTTP 403).
+    In that case the message goes out without the link, and the link is tried
+    again on its own in simpler forms.
+    """
     text = whatsapp_fix(text)
     parts = split_message(text)
     if not parts:
         raise RuntimeError("Nothing to send (empty message).")
     print(f"---- message ({len(text)} chars, {len(parts)} part(s)) ----\n{text}\n----")
+    if DRY:
+        return
     for i, part in enumerate(parts):
-        if DRY:
-            continue
         if i:
             time.sleep(10)
-        part = re.sub(r"https?://", "", part)  # links with https:// get a 403
-        for attempt in range(2):
-            r = requests.get(
-                "https://api.callmebot.com/whatsapp.php",
-                params={"phone": os.environ["WHATSAPP_PHONE"],
-                        "apikey": os.environ["CALLMEBOT_APIKEY"], "text": part},
-                timeout=60,
-            )
-            if r.status_code != 403:
-                break
-            print("CallMeBot returned 403, retrying in 30 s...")
-            time.sleep(30)
-        reply = " ".join(r.text.split())[:300]
-        print(f"CallMeBot part {i + 1}: HTTP {r.status_code}: {reply}")
-        bad = ("error", "invalid", "blocked", "too long", "not allowed")
-        ok = "queued" in reply.lower() or "sent" in reply.lower()
-        if r.status_code != 200 or (not ok and any(w in reply.lower() for w in bad)):
-            raise RuntimeError(f"CallMeBot did not accept part {i + 1}: {reply}")
+        part = re.sub(r"https?://", "", part)
+        ok, code = _callmebot(part)
+        if ok:
+            continue
+        links = LINK.findall(part)
+        if code == 403 and links:
+            print("403 with a link in the message: sending without the link.")
+            time.sleep(10)
+            plain = "\n".join(l for l in part.splitlines() if not LINK.search(l))
+            ok, code = _callmebot(plain + "\n\n📊 Full report: link in next message")
+            if ok:
+                url = links[0].replace("https://", "")
+                index = url.split("/reports/")[0] + "/"
+                for cand in (url, index, index.replace(".", " . ")):
+                    time.sleep(10)
+                    if _callmebot(cand)[0]:
+                        print("Link sent as:", cand)
+                        break
+                else:
+                    print("Could not send the link; open your reports page bookmark.")
+                continue
+        raise RuntimeError(f"CallMeBot did not accept part {i + 1} (HTTP {code}).")
     print("Sent.")
 
 
@@ -461,8 +487,6 @@ def summary(kind, now, s, ai, url, nd):
                       f"Risk    {c.get('spike_risk', '—')}"]) + "```"]
     if ev:
         lines += [""] + [f"{'⚠️' if x.get('important') else '▸'} {x.get('title', '')}" for x in ev]
-    # CallMeBot's server blocks messages containing "https://", so send the
-    # link without it; WhatsApp still makes it tappable.
     lines += ["", f"📊 Full report: {url.replace('https://', '')}"]
     return "\n".join(lines)
 
