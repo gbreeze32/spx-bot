@@ -256,6 +256,34 @@ def spx_stats(now, session):
     live_today = session == "live" and today_row
     prev = float(c.iloc[-2]) if live_today else float(c.iloc[-1])
     closes = c.iloc[:-1] if live_today else c
+
+    day_o = day_h = day_l = None
+    if session == "live":
+        try:
+            fi = yf.Ticker("^GSPC").fast_info
+            day_o = float(fi.get("open") or fi.get("regularMarketOpen") or 0) or None
+            day_h = float(fi.get("dayHigh") or fi.get("regularMarketDayHigh") or 0) or None
+            day_l = float(fi.get("dayLow") or fi.get("regularMarketDayLow") or 0) or None
+        except Exception:
+            pass
+        if not (day_o and day_h and day_l):
+            try:
+                intraday = yf.Ticker("^GSPC").history(period="1d", interval="5m").dropna()
+                if len(intraday):
+                    day_o = day_o or float(intraday["Open"].iloc[0])
+                    day_h = float(intraday["High"].max())
+                    day_l = float(intraday["Low"].min())
+            except Exception:
+                pass
+        if live_today:  # today's daily bar is available too; use whichever is wider
+            day_o = day_o or float(h.iloc[-1]["Open"])
+            day_h = max(day_h or 0, float(h.iloc[-1]["High"])) or None
+            day_l = min(day_l or 1e12, float(h.iloc[-1]["Low"])) or None
+        if day_h:
+            day_h = max(day_h, price)
+        if day_l:
+            day_l = min(day_l, price)
+
     r = np.log(closes).diff().dropna()
     rv = {n: float(r.tail(n).std() * np.sqrt(252) * 100) for n in (5, 10, 20)}
     ma = {n: float(closes.tail(n).mean()) for n in (20, 50, 100, 200)}
@@ -298,11 +326,11 @@ def spx_stats(now, session):
     }
     if live_today:
         data["hist_close"][-1] = price
-        o, hi_, lo_ = (float(x) for x in h.iloc[-1][["Open", "High", "Low"]])
-        data.update(open=o, high=max(hi_, price), low=min(lo_, price))
+    if session == "live":
+        data.update(open=day_o or price, high=day_h or price, low=day_l or price)
 
     lines = []
-    if live_today:
+    if session == "live":
         lines.append(f"SPX now {price:,.2f}, {price - prev:+,.2f} ({(price / prev - 1) * 100:+.2f}%) "
                      f"vs prior close {prev:,.2f}. Today open {data['open']:,.2f}, high {data['high']:,.2f}, "
                      f"low {data['low']:,.2f}, range {data['high'] - data['low']:.0f} pts vs 14-day avg {atr:.0f}.")
