@@ -7,10 +7,13 @@
 The two reports are published as designed web pages (GitHub Pages, /docs folder)
 and WhatsApp gets a short summary with the link.
 
-Secrets: WHATSAPP_PHONE, CALLMEBOT_APIKEY, ANTHROPIC_API_KEY.
+Reports go to Telegram (TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID). The 30-min
+updates go to WhatsApp via CallMeBot (WHATSAPP_PHONE, CALLMEBOT_APIKEY) unless
+UPDATES_TO = "telegram". Claude needs ANTHROPIC_API_KEY.
 FORCE_SEND=1 ignores the time window and sends right away (testing).
 DRY_RUN=1 writes the page locally and prints instead of publishing/sending.
 """
+import html
 import json
 import os
 import re
@@ -32,6 +35,7 @@ LANGUAGE = "English"           # e.g. "Simplified Chinese" for 中文报告
 MODEL = "claude-sonnet-5"      # Claude model used for the reports
 MORNING_SEND = (9, 21)         # ET  (= 6:21 AM Pacific)
 PRECLOSE_SEND = (15, 30)       # ET  (= 12:30 PM Pacific)
+UPDATES_TO = "whatsapp"        # 30-min updates: "whatsapp" or "telegram"
 # --------------------------------------------------------------------------
 
 ET = ZoneInfo("America/New_York")
@@ -143,6 +147,27 @@ def send(text):
             else:
                 print("Could not send the link; open your reports page bookmark.")
     print("Sent.")
+
+
+def telegram_ready():
+    return bool(os.environ.get("TELEGRAM_BOT_TOKEN") and os.environ.get("TELEGRAM_CHAT_ID"))
+
+
+def send_telegram(text_html, button=None):
+    """Send an HTML-formatted Telegram message, optionally with a link button."""
+    print(f"---- telegram ({len(text_html)} chars) ----\n{text_html}\n----")
+    if DRY:
+        return
+    body = {"chat_id": os.environ["TELEGRAM_CHAT_ID"], "text": text_html,
+            "parse_mode": "HTML", "disable_web_page_preview": True}
+    if button:
+        body["reply_markup"] = {"inline_keyboard": [[{"text": button[0], "url": button[1]}]]}
+    r = requests.post(f"https://api.telegram.org/bot{os.environ['TELEGRAM_BOT_TOKEN']}/sendMessage",
+                      json=body, timeout=60)
+    data = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
+    if not data.get("ok"):
+        raise RuntimeError(f"Telegram error {r.status_code}: {data.get('description', r.text[:200])}")
+    print("Sent to Telegram.")
 
 
 # ---------- time helpers ----------
@@ -516,6 +541,30 @@ def summary(kind, now, s, ai, url, nd):
     return "\n".join(lines)
 
 
+def summary_telegram(kind, now, s, ai, nd):
+    t = html.escape
+    c = ai.get("call") or {}
+    call = f"{c.get('sentiment')} · {c.get('confidence')}%" if c.get("sentiment") else "—"
+    one = s["em"][0]
+    ev = [x for x in (ai.get("events") or []) if x.get("important")][:2] or (ai.get("events") or [])[:1]
+    if kind == "morning":
+        head = "<b>" + f"☀️ SPX PRE-MARKET · {now:%a %b %-d}".upper() + "</b>"
+        rows = [f"Move    ±{one['sd']:.0f} pts ({one['sd'] / s['price'] * 100:.2f}%)"]
+        top = ""
+    else:
+        ch = s["price"] - s["prev"]
+        arrow = "🟢▲" if ch > 0 else "🔴▼" if ch < 0 else "■"
+        head = "<b>" + f"🔔 SPX · 30 MIN TO CLOSE · {now:%a %b %-d}".upper() + "</b>"
+        top = f"<b>{s['price']:,.2f}</b>  {arrow} {ch:+,.2f} ({pct_str(ch / s['prev'] * 100)})\n"
+        rows = [f"{nd:%a}     ±{one['sd']:.0f} pts ({one['sd'] / s['price'] * 100:.2f}%)"]
+    rows += [f"Range   {one['lo']:,.0f} – {one['hi']:,.0f}", f"Call    {call}",
+             f"Risk    {c.get('spike_risk', '—')}"]
+    lines = [head, top + t(ai.get("headline", "")), "<pre>" + t("\n".join(rows)) + "</pre>"]
+    if ev:
+        lines.append("\n".join(f"{'⚠️' if x.get('important') else '▸'} {t(str(x.get('title', '')))}" for x in ev))
+    return "\n\n".join(lines)
+
+
 def fallback_ai(err):
     return {"headline": f"Commentary unavailable today ({str(err)[:80]}). Numbers below are still current.",
             "chart_title": "", "events": [], "drivers": [], "levels": [], "level_note": "",
@@ -535,7 +584,11 @@ def job_update(now):
     chg = price - prev
     arrow = "🟢▲" if chg > 0 else "🔴▼" if chg < 0 else "■"
     tag = " (close)" if now.time() >= dtime(16, 0) else ""
-    send(f"SPX {price:,.2f} {arrow} {chg:+,.2f} ({pct_str(chg / prev * 100)}) · {now:%H:%M} ET{tag}")
+    msg = f"SPX {price:,.2f} {arrow} {chg:+,.2f} ({pct_str(chg / prev * 100)}) · {now:%H:%M} ET{tag}"
+    if UPDATES_TO == "telegram" and telegram_ready():
+        send_telegram(html.escape(msg))
+    else:
+        send(msg)
 
 
 def run_report(kind, now):
@@ -584,7 +637,10 @@ the next big event if nothing major. The "call" is for {nd:%A}.
     url = publish(f"{now:%Y-%m-%d}-{kind}.html", html_text)
     wait_until(MORNING_SEND if kind == "morning" else PRECLOSE_SEND)
     wait_for_page(url)
-    send(summary(kind, now, s, ai, url, nd))
+    if telegram_ready():
+        send_telegram(summary_telegram(kind, now, s, ai, nd), ("📊 Open full report", url))
+    else:
+        send(summary(kind, now, s, ai, url, nd))
 
 
 def job_morning(now):
