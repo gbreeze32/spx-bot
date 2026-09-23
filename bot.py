@@ -78,12 +78,26 @@ def _callmebot(text):
 LINK = re.compile(r"(?:https?://)?[\w.-]+\.github\.io/\S*")
 
 
+def _safe(text):
+    """Remove characters that web firewalls often flag (&, quotes, <>, ; ...)."""
+    text = "\n".join(l for l in text.splitlines() if not set(l.strip()) <= {"━"})
+    for a_, b_ in (("S&P", "S+P"), (" & ", " and "), ("&", "+"), ("/", "-"), ("±", "+-"),
+                   ("–", "-"), ("—", "-"), ("`", "")):
+        text = text.replace(a_, b_)
+    return re.sub(r"[\"'<>;{}\\|$%^=]", "", text)
+
+
+def _ascii(text):
+    return _safe(text).encode("ascii", "ignore").decode()
+
+
 def send(text):
     """Send to WhatsApp via CallMeBot, split into parts if long.
 
-    CallMeBot's firewall sometimes refuses messages that contain a link (HTTP 403).
-    In that case the message goes out without the link, and the link is tried
-    again on its own in simpler forms.
+    CallMeBot's firewall sometimes refuses a message (HTTP 403) because of its
+    content. Then the bot retries step by step: without the link, then with
+    risky characters removed, then plain ASCII, and sends the link on its own.
+    The log shows which step worked.
     """
     text = whatsapp_fix(text)
     parts = split_message(text)
@@ -96,27 +110,38 @@ def send(text):
         if i:
             time.sleep(10)
         part = re.sub(r"https?://", "", part)
-        ok, code = _callmebot(part)
-        if ok:
-            continue
         links = LINK.findall(part)
-        if code == 403 and links:
-            print("403 with a link in the message: sending without the link.")
-            time.sleep(10)
-            plain = "\n".join(l for l in part.splitlines() if not LINK.search(l))
-            ok, code = _callmebot(plain + "\n\n📊 Full report: link in next message")
-            if ok:
-                url = links[0].replace("https://", "")
-                index = url.split("/reports/")[0] + "/"
-                for cand in (url, index, index.replace(".", " . ")):
-                    time.sleep(10)
-                    if _callmebot(cand)[0]:
-                        print("Link sent as:", cand)
-                        break
-                else:
-                    print("Could not send the link; open your reports page bookmark.")
+        body = "\n".join(l for l in part.splitlines() if not LINK.search(l))
+        note = "\n\n📊 Full report: link in next message" if links else ""
+        steps = [("as written", part),
+                 ("without the link", body + note),
+                 ("with risky characters removed", _safe(body + note)),
+                 ("plain ASCII", _ascii(body) + ("\n\nFull report: link in next message" if links else ""))]
+        sent_step = None
+        for n, (label, msg) in enumerate(steps):
+            if n == 1 and not links:
                 continue
-        raise RuntimeError(f"CallMeBot did not accept part {i + 1} (HTTP {code}).")
+            if n:
+                time.sleep(10)
+            ok, code = _callmebot(msg)
+            if ok:
+                sent_step = n
+                print(f"Part {i + 1} sent {label}.")
+                break
+            if code != 403:
+                raise RuntimeError(f"CallMeBot did not accept part {i + 1} (HTTP {code}).")
+        if sent_step is None:
+            raise RuntimeError(f"CallMeBot refused part {i + 1} in every form (HTTP 403).")
+        if sent_step > 0 and links:
+            url = links[0]
+            index = url.split("/reports/")[0] + "/"
+            for cand in (url, index, index.replace(".", " . ")):
+                time.sleep(10)
+                if _callmebot(cand)[0]:
+                    print("Link sent as:", cand)
+                    break
+            else:
+                print("Could not send the link; open your reports page bookmark.")
     print("Sent.")
 
 
