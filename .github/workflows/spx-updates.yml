@@ -2,7 +2,7 @@ name: SPX 30-min updates
 
 on:
   schedule:
-    # Every 30 min Mon-Fri, 13:00-21:30 UTC. The script only sends 9:30-16:00 ET.
+    #  Every 30 min Mon-Fri, 13:00-21:30 UTC. The script only sends 9:30-16:00 ET.
     - cron: "0,30 13-21 * * 1-5"
   workflow_dispatch:
     inputs:
