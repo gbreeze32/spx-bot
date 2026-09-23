@@ -2,12 +2,22 @@ name: SPX 30-min updates
 
 on:
   schedule:
-    #  Every 30 min Mon-Fri, 13:00-21:30 UTC. The script only sends 9:30-16:00 ET.
-    - cron: "0,30 13-21 * * 1-5"
+    # SPX regular market hours in Pacific Time:
+    # 6:30 AM, then every 30 min, through 1:00 PM
+    - cron: "30 6 * * 1-5"
+      timezone: "America/Los_Angeles"
+
+    - cron: "0,30 7-12 * * 1-5"
+      timezone: "America/Los_Angeles"
+
+    - cron: "0 13 * * 1-5"
+      timezone: "America/Los_Angeles"
+
   workflow_dispatch:
     inputs:
       force:
         description: "Send now, even outside the normal time (test)"
+        required: false
         type: boolean
         default: true
 
@@ -15,17 +25,28 @@ jobs:
   run:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: pip
-      - run: pip install -r requirements.txt
-      - run: python bot.py update
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run SPX update
+        run: python bot.py update
         env:
           WHATSAPP_PHONE: ${{ secrets.WHATSAPP_PHONE }}
           CALLMEBOT_APIKEY: ${{ secrets.CALLMEBOT_APIKEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          FORCE_SEND: ${{ github.event.inputs.force == 'true' && '1' || '0' }}
+
+          # Manual run with Force checked = 1
+          # Scheduled run = 0
+          FORCE_SEND: ${{ github.event_name == 'workflow_dispatch' && inputs.force && '1' || '0' }}
