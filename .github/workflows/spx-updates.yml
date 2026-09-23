@@ -2,15 +2,7 @@ name: SPX 30-min updates
 
 on:
   schedule:
-    # SPX regular market hours in Pacific Time:
-    # 6:30 AM, then every 30 min, through 1:00 PM
-    - cron: "30 6 * * 1-5"
-      timezone: "America/Los_Angeles"
-
-    - cron: "0,30 7-12 * * 1-5"
-      timezone: "America/Los_Angeles"
-
-    - cron: "0 13 * * 1-5"
+    - cron: "20 9 * * 1-5"
       timezone: "America/Los_Angeles"
 
   workflow_dispatch:
@@ -27,6 +19,12 @@ jobs:
     timeout-minutes: 10
 
     steps:
+      - name: Show trigger information
+        run: |
+          echo "Triggered!"
+          echo "Event: ${{ github.event_name }}"
+          date -u
+
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -46,7 +44,4 @@ jobs:
           CALLMEBOT_APIKEY: ${{ secrets.CALLMEBOT_APIKEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-
-          # Manual run with Force checked = 1
-          # Scheduled run = 0
           FORCE_SEND: ${{ github.event_name == 'workflow_dispatch' && inputs.force && '1' || '0' }}
