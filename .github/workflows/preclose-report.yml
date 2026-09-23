@@ -11,6 +11,13 @@ on:
         type: boolean
         default: true
 
+permissions:
+  contents: write   # lets the bot save the report page to docs/
+
+concurrency:
+  group: report-pages
+  cancel-in-progress: false
+
 jobs:
   run:
     runs-on: ubuntu-latest
